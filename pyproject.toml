@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "captcha-toolkit"
+version = "0.1.0"
+description = "Local-first captcha solvers using classical computer vision. Broken-circle solver shipped; silhouette, slider, rotate planned."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "captcha-toolkit contributors" }]
+keywords = ["captcha", "computer-vision", "opencv", "automation", "scraping"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.10",
+]
+
+[project.optional-dependencies]
+fallback = ["requests>=2.32"]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "Pillow>=10.0",
+    "ruff>=0.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/EquationTec/captcha-toolkit"
+Issues = "https://github.com/EquationTec/captcha-toolkit/issues"
+
+[tool.setuptools.packages.find]
+include = ["captcha_toolkit*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
