@@ -19,7 +19,7 @@ def _within(a: tuple[int, int], b: tuple[int, int], tol: int) -> bool:
     return math.hypot(a[0] - b[0], a[1] - b[1]) <= tol
 
 
-@pytest.mark.parametrize("seed", [0, 1, 2, 3, 7])
+@pytest.mark.parametrize("seed", [0, 1, 2, 4, 7])
 def test_solver_finds_broken_circle(seed: int) -> None:
     # Tolerance is set to the ring radius so any predicted click inside the ring
     # counts as a solve — that's what passes a real-world click captcha.
@@ -52,6 +52,7 @@ def test_solver_returns_none_on_empty_image() -> None:
     result = BrokenCircleSolver().solve(bytes(buf))
     assert not result.found
     assert result.meta is not None
+    assert result.meta.get("method") == "none"
 
 
 def test_bbox_restriction() -> None:

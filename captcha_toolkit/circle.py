@@ -152,9 +152,13 @@ class BrokenCircleSolver(CaptchaSolver):
             by = int(np.mean([s[1] for s in best]))
             avg_sat = float(np.mean([s[5] for s in best]))
             mask_names = sorted({s[6] for s in best})
-            confidence = min(1.0, len(best) / max(1, len(masks))) * min(
-                1.0, avg_sat / 100.0
-            )
+            # `combined` is derived (OR of med20 + sat), not independent; exclude it
+            # from both numerator and denominator of the consensus ratio.
+            independent_masks = [m for m in masks if m[0] != "combined"]
+            independent_hits = sum(1 for s in best if s[6] != "combined")
+            confidence = min(
+                1.0, independent_hits / max(1, len(independent_masks))
+            ) * min(1.0, avg_sat / 100.0)
             return SolverResult(
                 coords=(bx + cx, by + cy),
                 confidence=confidence,
@@ -222,6 +226,11 @@ def _build_masks(
     if reference_png:
         ref = _decode(reference_png)
         if ref is not None:
+            # Guard against a resize buffer > MAX_IMAGE_DIM^2 when the crop
+            # dimensions exceed the cap (refdiff requires resizing the ref to
+            # match). Skip the refdiff mask in that case rather than allocate.
+            if cw * ch > MAX_IMAGE_DIM * MAX_IMAGE_DIM:
+                return masks
             if ref.shape[:2] != (ch, cw):
                 ref = cv2.resize(ref, (cw, ch))
             ed = np.max(cv2.absdiff(crop, ref), axis=2)
@@ -302,47 +311,74 @@ def _ring_saturation(
 ) -> float:
     """Mean HSV-S along the ring (with 3-pixel radial tolerance)."""
     h, w = hsv_crop.shape[:2]
-    sats: list[float] = []
-    for a in np.linspace(0, 2 * np.pi, n, endpoint=False):
-        for dr in (-1, 0, 1):
-            px = int(cx + (radius + dr) * np.cos(a))
-            py = int(cy + (radius + dr) * np.sin(a))
-            if 0 <= px < w and 0 <= py < h:
-                sats.append(float(hsv_crop[py, px, 1]))
-    return float(np.mean(sats)) if sats else 0.0
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    cos_a = np.cos(angles)
+    sin_a = np.sin(angles)
+    sat_channel = hsv_crop[:, :, 1]
+
+    collected: list[np.ndarray] = []
+    for dr in (-1, 0, 1):
+        r = radius + dr
+        px = (cx + r * cos_a).astype(np.int64)
+        py = (cy + r * sin_a).astype(np.int64)
+        valid = (px >= 0) & (px < w) & (py >= 0) & (py < h)
+        if valid.any():
+            collected.append(sat_channel[py[valid], px[valid]].astype(np.float64))
+    if not collected:
+        return 0.0
+    vals = np.concatenate(collected)
+    return float(vals.mean()) if vals.size else 0.0
 
 
 def _arc_stats(
     mask: np.ndarray, cx: int, cy: int, radius: int, n: int = 360
 ) -> tuple[float, float]:
-    """Return (coverage_deg, largest_gap_deg) for the ring at (cx, cy, radius)."""
+    """Return (coverage_deg, largest_gap_deg) for the ring at (cx, cy, radius).
+
+    Uses a stricter ±1 radial band for coverage counting (so noisy backgrounds
+    don't inflate coverage) and the looser ±2 band for gap detection (so a
+    genuine ring isn't broken by 1-pixel jitter).
+    """
     h, w = mask.shape[:2]
-    has_edge = np.zeros(n, dtype=bool)
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    cos_a = np.cos(angles)
+    sin_a = np.sin(angles)
+    has_edge_wide = np.zeros(n, dtype=bool)
+    has_edge_tight = np.zeros(n, dtype=bool)
 
-    for i, a in enumerate(np.linspace(0, 2 * np.pi, n, endpoint=False)):
-        for dr in (-2, -1, 0, 1, 2):
-            px = int(cx + (radius + dr) * np.cos(a))
-            py = int(cy + (radius + dr) * np.sin(a))
-            if 0 <= px < w and 0 <= py < h and mask[py, px] > 0:
-                has_edge[i] = True
-                break
+    for dr in (-2, -1, 0, 1, 2):
+        r = radius + dr
+        px = (cx + r * cos_a).astype(np.int64)
+        py = (cy + r * sin_a).astype(np.int64)
+        valid = (px >= 0) & (px < w) & (py >= 0) & (py < h)
+        if not valid.any():
+            continue
+        hit = np.zeros(n, dtype=bool)
+        hit[valid] = mask[py[valid], px[valid]] > 0
+        has_edge_wide |= hit
+        if -1 <= dr <= 1:
+            has_edge_tight |= hit
 
-    coverage_deg = (np.sum(has_edge) / n) * 360
+    coverage_deg = (np.sum(has_edge_tight) / n) * 360
 
-    if np.all(has_edge):
+    if np.all(has_edge_wide):
         return coverage_deg, 0.0
-    if not np.any(has_edge):
-        return 0.0, 360.0
+    if not np.any(has_edge_wide):
+        return coverage_deg, 360.0
 
     # Largest contiguous False run, wrapping via doubling.
-    doubled = np.concatenate([~has_edge, ~has_edge])
-    max_gap = cur = 0
-    for v in doubled:
-        if v:
-            cur += 1
-            max_gap = max(max_gap, cur)
-        else:
-            cur = 0
+    not_edge = ~has_edge_wide
+    doubled = np.concatenate([not_edge, not_edge])
+    # Vectorized longest-run: find run boundaries then take the max length.
+    # Pad with False so run-ends are always detected.
+    padded = np.concatenate([[False], doubled, [False]])
+    diff = np.diff(padded.astype(np.int8))
+    starts = np.where(diff == 1)[0]
+    ends = np.where(diff == -1)[0]
+    if starts.size == 0:
+        max_gap = 0
+    else:
+        max_gap = int((ends - starts).max())
     gap_deg = (min(max_gap, n) / n) * 360
     return coverage_deg, gap_deg
 
@@ -350,17 +386,29 @@ def _arc_stats(
 def _cluster_candidates(
     cands: list[tuple[int, int, int, float, float, float, str]], dist: int = 25
 ) -> list[list[tuple[int, int, int, float, float, float, str]]]:
-    """Group candidate rings within `dist` pixels so multi-mask agreement stacks up."""
+    """Group candidate rings within `dist` pixels so multi-mask agreement stacks up.
+
+    Compares each candidate against the running centroid of each cluster so
+    membership is order-independent.
+    """
     clusters: list[list[tuple[int, int, int, float, float, float, str]]] = []
+    centroids: list[tuple[float, float]] = []
     for cand in cands:
-        for cluster in clusters:
-            dx = cand[0] - cluster[0][0]
-            dy = cand[1] - cluster[0][1]
+        for i, (cxm, cym) in enumerate(centroids):
+            dx = cand[0] - cxm
+            dy = cand[1] - cym
             if dx * dx + dy * dy < dist * dist:
-                cluster.append(cand)
+                clusters[i].append(cand)
+                n = len(clusters[i])
+                # Update running centroid mean.
+                centroids[i] = (
+                    cxm + (cand[0] - cxm) / n,
+                    cym + (cand[1] - cym) / n,
+                )
                 break
         else:
             clusters.append([cand])
+            centroids.append((float(cand[0]), float(cand[1])))
     return clusters
 
 

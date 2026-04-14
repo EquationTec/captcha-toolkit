@@ -59,18 +59,41 @@ def make_broken_circle_image(
 
     for i, ((x, y), color) in enumerate(zip(positions, colors)):
         if i == broken_idx:
-            start = float(rng.uniform(0, 360 - broken_gap_deg))
+            start = float(rng.uniform(0, 360))
             end = start + (360 - broken_gap_deg)
-            cv2.ellipse(
-                base,
-                (x, y),
-                (ring_radius, ring_radius),
-                0,
-                start,
-                end,
-                color,
-                ring_thickness,
-            )
+            if end <= 360:
+                cv2.ellipse(
+                    base,
+                    (x, y),
+                    (ring_radius, ring_radius),
+                    0,
+                    start,
+                    end,
+                    color,
+                    ring_thickness,
+                )
+            else:
+                # Wrap across 0/360: draw two arcs.
+                cv2.ellipse(
+                    base,
+                    (x, y),
+                    (ring_radius, ring_radius),
+                    0,
+                    start,
+                    360,
+                    color,
+                    ring_thickness,
+                )
+                cv2.ellipse(
+                    base,
+                    (x, y),
+                    (ring_radius, ring_radius),
+                    0,
+                    0,
+                    end - 360,
+                    color,
+                    ring_thickness,
+                )
         else:
             cv2.circle(base, (x, y), ring_radius, color, ring_thickness)
 
