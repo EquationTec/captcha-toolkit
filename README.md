@@ -1,5 +1,7 @@
 # captcha-toolkit
 
+[![CI](https://github.com/EquationTec/captcha-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/EquationTec/captcha-toolkit/actions/workflows/ci.yml)
+
 Local-first captcha solvers using classical computer vision. No ML, no GPU, no
 paid API for core solvers. Just OpenCV and numpy.
 
